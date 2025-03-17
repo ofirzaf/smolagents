@@ -147,7 +147,7 @@ class MessageRole(str, Enum):
 
 tool_role_conversions = {
     MessageRole.TOOL_CALL: MessageRole.ASSISTANT,
-    MessageRole.TOOL_RESPONSE: MessageRole.USER,
+    MessageRole.TOOL_RESPONSE: MessageRole.ASSISTANT,
 }
 
 
@@ -170,6 +170,15 @@ def get_tool_json_schema(tool: Tool) -> Dict:
                 "required": required,
             },
         },
+    }
+
+
+def get_tool_json_phi4_schema(tool: Tool) -> Dict:
+    properties = deepcopy(tool.inputs)
+    return {
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": properties,
     }
 
 
@@ -848,24 +857,26 @@ class TransformersModel(Model):
 
         if max_new_tokens:
             completion_kwargs["max_new_tokens"] = max_new_tokens
+        
+        processor = getattr(self, "processor", self.tokenizer)
 
-        if hasattr(self, "processor"):
-            prompt_tensor = self.processor.apply_chat_template(
-                messages,
-                tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
-                return_tensors="pt",
-                tokenize=True,
-                return_dict=True,
-                add_generation_prompt=True if tools_to_call_from else False,
-            )
-        else:
-            prompt_tensor = self.tokenizer.apply_chat_template(
-                messages,
-                tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
-                return_tensors="pt",
-                return_dict=True,
-                add_generation_prompt=True if tools_to_call_from else False,
-            )
+        # tools_for_prompt = [get_tool_json_phi4_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None
+
+        # for message in messages:
+        #     if message["role"] == MessageRole.SYSTEM:
+        #         message["tools"] = json.dumps(tools_for_prompt)
+        #         break
+
+        prompt_tensor = processor.apply_chat_template(
+            messages,
+            tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
+            tokenize=True,
+            return_tensors="pt",
+            return_dict=True,
+            add_generation_prompt=True if tools_to_call_from else False,
+        )
+        # print(f'\n\n******{processor.apply_chat_template(messages, tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None, tokenize=False, add_generation_prompt=True)}*****\n\n', flush=True)
+
 
         prompt_tensor = prompt_tensor.to(self.model.device)
         count_prompt_tokens = prompt_tensor["input_ids"].shape[1]
@@ -883,10 +894,8 @@ class TransformersModel(Model):
             **completion_kwargs,
         )
         generated_tokens = out[0, count_prompt_tokens:]
-        if hasattr(self, "processor"):
-            output = self.processor.decode(generated_tokens, skip_special_tokens=True)
-        else:
-            output = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        output = processor.decode(generated_tokens, skip_special_tokens=True)
+        # print(f'\n\n$$$$$$$${processor.decode(generated_tokens, skip_special_tokens=False)}$$$$$$$$$\n\n', flush=True)
         self.last_input_token_count = count_prompt_tokens
         self.last_output_token_count = len(generated_tokens)
 
