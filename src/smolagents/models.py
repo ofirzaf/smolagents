@@ -759,6 +759,7 @@ class TransformersModel(Model):
         device_map: Optional[str] = None,
         torch_dtype: Optional[str] = None,
         trust_remote_code: bool = False,
+        backend="torch",
         **kwargs,
     ):
         if not is_torch_available() or not _is_package_available("transformers"):
@@ -785,28 +786,40 @@ class TransformersModel(Model):
             logger.warning(
                 f"`max_new_tokens` not provided, using this default value for `max_new_tokens`: {default_max_tokens}"
             )
-
-        if device_map is None:
-            device_map = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Using device: {device_map}")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_id)
         self._is_vlm = False
-        try:
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                device_map=device_map,
-                torch_dtype=torch_dtype,
-                trust_remote_code=trust_remote_code,
-            )
-            self.tokenizer = AutoTokenizer.from_pretrained(model_id)
-        except ValueError as e:
-            if "Unrecognized configuration class" in str(e):
-                self.model = AutoModelForImageTextToText.from_pretrained(model_id, device_map=device_map)
-                self.processor = AutoProcessor.from_pretrained(model_id)
-                self._is_vlm = True
-            else:
-                raise e
-        except Exception as e:
-            raise ValueError(f"Failed to load tokenizer and model for {model_id=}: {e}") from e
+        if backend == "torch":
+            if device_map is None:
+                if torch.cuda.is_available():
+                    device_map = "cuda"
+                elif torch.xpu.is_available():
+                    device_map = "xpu"
+                else:
+                    device_map = "cpu"
+            logger.info(f"Using device: {device_map}")
+            try:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_id,
+                    device_map=device_map,
+                    torch_dtype=torch_dtype,
+                    trust_remote_code=trust_remote_code,
+                )
+            except ValueError as e:
+                if "Unrecognized configuration class" in str(e):
+                    self.model = AutoModelForImageTextToText.from_pretrained(model_id, device_map=device_map)
+                    self.processor = AutoProcessor.from_pretrained(model_id)
+                    self._is_vlm = True
+                else:
+                    raise e
+            except Exception as e:
+                raise ValueError(f"Failed to load tokenizer and model for {model_id=}: {e}") from e
+        elif backend == "ov-optimum":
+            from optimum.intel import OVModelForCausalLM
+            device = kwargs.get("device", None)
+            if device is None:
+                import openvino as ov
+                device = "GPU" if "GPU" in ov.Core().get_available_devices() else "CPU"
+            self.model = OVModelForCausalLM.from_pretrained(model_id, device=device, export=False)
         super().__init__(flatten_messages_as_text=not self._is_vlm, **kwargs)
 
     def make_stopping_criteria(self, stop_sequences: List[str], tokenizer) -> "StoppingCriteriaList":
