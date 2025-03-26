@@ -177,7 +177,7 @@ def stream_to_gradio(
 class GradioUI:
     """A one-line interface to launch your agent in Gradio"""
 
-    def __init__(self, agent: MultiStepAgent, file_upload_folder: str | None = None, reset_memory_between_interactions: bool = False):
+    def __init__(self, agent: MultiStepAgent, file_upload_folder: str | None = None):
         if not _is_package_available("gradio"):
             raise ModuleNotFoundError(
                 "Please install 'gradio' extra to use the GradioUI: `pip install 'smolagents[gradio]'`"
@@ -186,7 +186,6 @@ class GradioUI:
         self.file_upload_folder = file_upload_folder
         self.name = getattr(agent, "name") or "Agent interface"
         self.description = getattr(agent, "description", None)
-        self.reset_memory_between_interactions = reset_memory_between_interactions
         if self.file_upload_folder is not None:
             if not os.path.exists(file_upload_folder):
                 os.mkdir(file_upload_folder)
@@ -202,7 +201,7 @@ class GradioUI:
             messages.append(gr.ChatMessage(role="user", content=prompt))
             yield messages
 
-            for msg in stream_to_gradio(session_state["agent"], task=prompt, reset_agent_memory=self.reset_memory_between_interactions):
+            for msg in stream_to_gradio(session_state["agent"], task=prompt, reset_agent_memory=False):
                 messages.append(msg)
                 yield messages
 
@@ -253,6 +252,12 @@ class GradioUI:
             "",
             gr.Button(interactive=False),
         )
+    
+    def clear_agent_memory(self, session_state):
+        if "agent" not in session_state:
+            session_state["agent"] = self.agent
+        session_state["agent"].memory.reset()
+        session_state["agent"].monitor.reset()
 
     def launch(self, share: bool = True, **kwargs):
         import gradio as gr
@@ -279,6 +284,7 @@ class GradioUI:
                         placeholder="Enter your prompt here and press Shift+Enter or press the button",
                     )
                     submit_btn = gr.Button("Submit", variant="primary")
+                    clear_btn = gr.ClearButton(variant="secondary")
 
                 # If an upload folder is provided, enable the upload feature
                 if self.file_upload_folder is not None:
@@ -289,6 +295,16 @@ class GradioUI:
                         [upload_file, file_uploads_log],
                         [upload_status, file_uploads_log],
                     )
+
+                gr.Examples([
+                        ["Summarize the main innovations in Phi-4-mini model released by Microsoft"],
+                        ["Prepare a presnetation presnting your results"],
+                        ["Please also send the key innovations to my colleague at ofir.zafrir@intel.com"],
+                        ["Send a report on your findings to my colleague at ofir.zafrir@intel.com"],
+                        ["Find me a flight from New York to Los Angeles on 2025-10-01 and send it over email to me at ofir.zafrir@intel.com"]
+                    ],
+                    inputs=[text_input],
+                )
 
                 gr.HTML("<br><br><h4><center>Powered by:</center></h4>")
                 with gr.Row():
@@ -310,6 +326,9 @@ class GradioUI:
             )
 
             # Set up event handlers
+            clear_btn.add([text_input, chatbot])
+            clear_btn.click(self.clear_agent_memory, [session_state])
+
             text_input.submit(
                 self.log_user_message,
                 [text_input, file_uploads_log],
