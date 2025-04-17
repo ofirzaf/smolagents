@@ -137,7 +137,7 @@ class MessageRole(str, Enum):
 
 tool_role_conversions = {
     MessageRole.TOOL_CALL: MessageRole.ASSISTANT,
-    MessageRole.TOOL_RESPONSE: MessageRole.USER,
+    MessageRole.TOOL_RESPONSE: MessageRole.ASSISTANT,
 }
 
 
@@ -160,6 +160,15 @@ def get_tool_json_schema(tool: Tool) -> Dict:
                 "required": required,
             },
         },
+    }
+
+
+def get_tool_json_phi4_schema(tool: Tool) -> Dict:
+    properties = deepcopy(tool.inputs)
+    return {
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": properties,
     }
 
 
@@ -640,6 +649,7 @@ class TransformersModel(Model):
         device_map: Optional[str] = None,
         torch_dtype: Optional[str] = None,
         trust_remote_code: bool = False,
+        backend="torch",
         **kwargs,
     ):
         try:
@@ -667,33 +677,44 @@ class TransformersModel(Model):
             logger.warning(
                 f"`max_new_tokens` not provided, using this default value for `max_new_tokens`: {default_max_tokens}"
             )
-
-        if device_map is None:
-            device_map = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Using device: {device_map}")
+        self.processor = AutoTokenizer.from_pretrained(model_id)
         self._is_vlm = False
-        try:
-            self.model = AutoModelForImageTextToText.from_pretrained(
-                model_id,
-                device_map=device_map,
-                torch_dtype=torch_dtype,
-                trust_remote_code=trust_remote_code,
-            )
-            self.processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
-            self._is_vlm = True
-        except ValueError as e:
-            if "Unrecognized configuration class" in str(e):
-                self.model = AutoModelForCausalLM.from_pretrained(
+        if backend == "torch":
+            if device_map is None:
+                if torch.cuda.is_available():
+                    device_map = "cuda"
+                elif torch.xpu.is_available():
+                    device_map = "xpu"
+                else:
+                    device_map = "cpu"
+            logger.info(f"Using device: {device_map}")
+            try:
+                self.model = AutoModelForImageTextToText.from_pretrained(
                     model_id,
                     device_map=device_map,
                     torch_dtype=torch_dtype,
                     trust_remote_code=trust_remote_code,
                 )
-                self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+                self.processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+                self._is_vlm = True
+            except ValueError as e:
+                if "Unrecognized configuration class" in str(e):
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                            model_id,
+                            device_map=device_map,
+                            torch_dtype=torch_dtype,
+                            trust_remote_code=trust_remote_code,
+                        )
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
             else:
                 raise e
-        except Exception as e:
-            raise ValueError(f"Failed to load tokenizer and model for {model_id=}: {e}") from e
+        elif backend == "ov-optimum":
+            from optimum.intel import OVModelForCausalLM
+            device = kwargs.get("device", None)
+            if device is None:
+                import openvino as ov
+                device = "GPU" if "GPU" in ov.Core().get_available_devices() else "CPU"
+            self.model = OVModelForCausalLM.from_pretrained(model_id, device=device, export=False)
         super().__init__(flatten_messages_as_text=not self._is_vlm, **kwargs)
 
     def make_stopping_criteria(self, stop_sequences: List[str], tokenizer) -> "StoppingCriteriaList":
@@ -744,24 +765,26 @@ class TransformersModel(Model):
 
         if max_new_tokens:
             completion_kwargs["max_new_tokens"] = max_new_tokens
+        
+        processor = getattr(self, "processor", self.tokenizer)
 
-        if hasattr(self, "processor"):
-            prompt_tensor = self.processor.apply_chat_template(
-                messages,
-                tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
-                return_tensors="pt",
-                tokenize=True,
-                return_dict=True,
-                add_generation_prompt=True if tools_to_call_from else False,
-            )
-        else:
-            prompt_tensor = self.tokenizer.apply_chat_template(
-                messages,
-                tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
-                return_tensors="pt",
-                return_dict=True,
-                add_generation_prompt=True if tools_to_call_from else False,
-            )
+        # tools_for_prompt = [get_tool_json_phi4_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None
+
+        # for message in messages:
+        #     if message["role"] == MessageRole.SYSTEM:
+        #         message["tools"] = json.dumps(tools_for_prompt)
+        #         break
+
+        prompt_tensor = processor.apply_chat_template(
+            messages,
+            tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
+            tokenize=True,
+            return_tensors="pt",
+            return_dict=True,
+            add_generation_prompt=True if tools_to_call_from else False,
+        )
+        # print(f'\n\n******{processor.apply_chat_template(messages, tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None, tokenize=False, add_generation_prompt=True)}*****\n\n', flush=True)
+
 
         prompt_tensor = prompt_tensor.to(self.model.device)
         count_prompt_tokens = prompt_tensor["input_ids"].shape[1]
@@ -779,10 +802,8 @@ class TransformersModel(Model):
             **completion_kwargs,
         )
         generated_tokens = out[0, count_prompt_tokens:]
-        if hasattr(self, "processor"):
-            output_text = self.processor.decode(generated_tokens, skip_special_tokens=True)
-        else:
-            output_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        output = processor.decode(generated_tokens, skip_special_tokens=True)
+        # print(f'\n\n$$$$$$$${processor.decode(generated_tokens, skip_special_tokens=False)}$$$$$$$$$\n\n', flush=True)
         self.last_input_token_count = count_prompt_tokens
         self.last_output_token_count = len(generated_tokens)
 
