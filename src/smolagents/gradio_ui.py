@@ -270,6 +270,12 @@ class GradioUI:
             "",
             gr.Button(interactive=False),
         )
+    
+    def clear_agent_memory(self, session_state):
+        if "agent" not in session_state:
+            session_state["agent"] = self.agent
+        session_state["agent"].memory.reset()
+        session_state["agent"].monitor.reset()
 
     def launch(self, share: bool = True, **kwargs):
         self.create_app().launch(debug=True, share=share, **kwargs)
@@ -299,6 +305,7 @@ class GradioUI:
                         placeholder="Enter your prompt here and press Shift+Enter or press the button",
                     )
                     submit_btn = gr.Button("Submit", variant="primary")
+                    clear_btn = gr.ClearButton(variant="secondary")
 
                 # If an upload folder is provided, enable the upload feature
                 if self.file_upload_folder is not None:
@@ -309,6 +316,17 @@ class GradioUI:
                         [upload_file, file_uploads_log],
                         [upload_status, file_uploads_log],
                     )
+
+                gr.Examples([
+                        ["Write a python function for building a PowerPoint presentation according to a list of slides where each slide has a title and a body and a save path"],
+                        ["Summarize the main innovations in Phi-4-mini model released by Microsoft"],
+                        ["Prepare a presnetation presnting your results"],
+                        ["Please also send the key innovations to my colleague at ofir.zafrir@intel.com"],
+                        ["Send a report on your findings to my colleague at ofir.zafrir@intel.com"],
+                        ["Find me a flight from New York to Los Angeles on 2025-10-01 and send it over email to me at ofir.zafrir@intel.com"]
+                    ],
+                    inputs=[text_input],
+                )
 
                 gr.HTML("<br><br><h4><center>Powered by:</center></h4>")
                 with gr.Row():
@@ -330,6 +348,9 @@ class GradioUI:
             )
 
             # Set up event handlers
+            clear_btn.add([text_input, chatbot])
+            clear_btn.click(self.clear_agent_memory, [session_state])
+
             text_input.submit(
                 self.log_user_message,
                 [text_input, file_uploads_log],

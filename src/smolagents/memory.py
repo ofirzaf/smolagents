@@ -1,6 +1,7 @@
 from dataclasses import asdict, dataclass
 from logging import getLogger
 from typing import TYPE_CHECKING, Any, Dict, List, TypedDict, Union
+import json
 
 from smolagents.models import ChatMessage, MessageRole
 from smolagents.monitoring import AgentLogger, LogLevel
@@ -95,7 +96,7 @@ class ActionStep(MemoryStep):
                     content=[
                         {
                             "type": "text",
-                            "text": "Calling tools:\n" + str([tc.dict() for tc in self.tool_calls]),
+                            "text": f'Action:\n{json.dumps([tc.dict()["function"] for tc in self.tool_calls], default=str)}\n',
                         }
                     ],
                 )
@@ -122,7 +123,7 @@ class ActionStep(MemoryStep):
                     content=[
                         {
                             "type": "text",
-                            "text": f"Observation:\n{self.observations}",
+                            "text": f"Observation:\n{self.observations}ֿ\n\n",
                         }
                     ],
                 )

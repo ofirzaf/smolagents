@@ -149,7 +149,7 @@ class MessageRole(str, Enum):
 
 tool_role_conversions = {
     MessageRole.TOOL_CALL: MessageRole.ASSISTANT,
-    MessageRole.TOOL_RESPONSE: MessageRole.USER,
+    MessageRole.TOOL_RESPONSE: MessageRole.ASSISTANT,
 }
 
 
@@ -175,11 +175,31 @@ def get_tool_json_schema(tool: Tool) -> Dict:
     }
 
 
-def remove_stop_sequences(content: str, stop_sequences: List[str]) -> str:
-    for stop_seq in stop_sequences:
-        if content[-len(stop_seq) :] == stop_seq:
-            content = content[: -len(stop_seq)]
-    return content
+def get_tool_json_phi4_schema(tool: Tool) -> Dict:
+    properties = deepcopy(tool.inputs)
+    return {
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": properties,
+    }
+
+
+# def remove_stop_sequences(content: str, stop_sequences: List[str]) -> str:
+#     for stop_seq in stop_sequences:
+#         if content[-len(stop_seq) :] == stop_seq:
+#             content = content[: -len(stop_seq)]
+#     return content
+
+
+def remove_stop_sequences(content: str, stop_sequences: list[str]) -> str:
+    """
+    Returns the part of the string `s` up to (but not including) the first occurrence 
+    of any substring in `substrings`. If none are found, returns the entire string.
+    """
+    indices = [content.find(sub) for sub in stop_sequences if sub in content]
+    if not indices:
+        return content
+    return content[:min(indices)]
 
 
 def get_clean_message_list(
@@ -687,6 +707,7 @@ class TransformersModel(Model):
         device_map: Optional[str] = None,
         torch_dtype: Optional[str] = None,
         trust_remote_code: bool = False,
+        backend="torch",
         **kwargs,
     ):
         try:
@@ -714,33 +735,44 @@ class TransformersModel(Model):
             logger.warning(
                 f"`max_new_tokens` not provided, using this default value for `max_new_tokens`: {default_max_tokens}"
             )
-
-        if device_map is None:
-            device_map = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Using device: {device_map}")
+        self.processor = AutoTokenizer.from_pretrained(model_id)
         self._is_vlm = False
-        try:
-            self.model = AutoModelForImageTextToText.from_pretrained(
-                model_id,
-                device_map=device_map,
-                torch_dtype=torch_dtype,
-                trust_remote_code=trust_remote_code,
-            )
-            self.processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
-            self._is_vlm = True
-        except ValueError as e:
-            if "Unrecognized configuration class" in str(e):
-                self.model = AutoModelForCausalLM.from_pretrained(
+        if backend == "torch":
+            if device_map is None:
+                if torch.cuda.is_available():
+                    device_map = "cuda"
+                elif torch.xpu.is_available():
+                    device_map = "xpu"
+                else:
+                    device_map = "cpu"
+            logger.info(f"Using device: {device_map}")
+            try:
+                self.model = AutoModelForImageTextToText.from_pretrained(
                     model_id,
                     device_map=device_map,
                     torch_dtype=torch_dtype,
                     trust_remote_code=trust_remote_code,
                 )
-                self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+                self.processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+                self._is_vlm = True
+            except ValueError as e:
+                if "Unrecognized configuration class" in str(e):
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                            model_id,
+                            device_map=device_map,
+                            torch_dtype=torch_dtype,
+                            trust_remote_code=trust_remote_code,
+                        )
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
             else:
                 raise e
-        except Exception as e:
-            raise ValueError(f"Failed to load tokenizer and model for {model_id=}: {e}") from e
+        elif backend == "ov-optimum":
+            from optimum.intel import OVModelForCausalLM
+            device = kwargs.get("device", None)
+            if device is None:
+                import openvino as ov
+                device = "GPU" if "GPU" in ov.Core().get_available_devices() else "CPU"
+            self.model = OVModelForCausalLM.from_pretrained(model_id, device=device, export=False)
         super().__init__(flatten_messages_as_text=not self._is_vlm, **kwargs)
 
     def make_stopping_criteria(self, stop_sequences: List[str], tokenizer) -> "StoppingCriteriaList":
@@ -758,7 +790,7 @@ class TransformersModel(Model):
             def __call__(self, input_ids, scores, **kwargs):
                 generated = self.tokenizer.decode(input_ids[0][-1], skip_special_tokens=True)
                 self.stream += generated
-                if any([self.stream.endswith(stop_string) for stop_string in self.stop_strings]):
+                if any([stop_string in self.stream for stop_string in self.stop_strings]):
                     return True
                 return False
 
@@ -791,32 +823,47 @@ class TransformersModel(Model):
 
         if max_new_tokens:
             completion_kwargs["max_new_tokens"] = max_new_tokens
+        
+        processor = getattr(self, "processor", self.tokenizer)
 
-        if hasattr(self, "processor"):
-            prompt_tensor = self.processor.apply_chat_template(
-                messages,
-                tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
-                return_tensors="pt",
-                tokenize=True,
-                return_dict=True,
-                add_generation_prompt=True if tools_to_call_from else False,
-            )
+        # tools_for_prompt = [get_tool_json_phi4_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None
+
+        # for message in messages:
+        #     if message["role"] == MessageRole.SYSTEM:
+        #         message["tools"] = json.dumps(tools_for_prompt)
+        #         break
+
+        # If last message is an assistant message we want to continue the same message and therefore we will add the prefix.
+        # prefix = "Action:\n[{\"" if messages[-1]["role"] == MessageRole.ASSISTANT else ""
+        prefix = "Action:\n[{\""
+        if messages[-1]["role"] == MessageRole.ASSISTANT:
+            try:
+                messages[-1]["content"]["text"] = messages[-1]["content"]["text"] + prefix
+            except TypeError:
+                messages[-1]["content"] = messages[-1]["content"] + prefix
         else:
-            prompt_tensor = self.tokenizer.apply_chat_template(
-                messages,
-                tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
-                return_tensors="pt",
-                return_dict=True,
-                add_generation_prompt=True if tools_to_call_from else False,
-            )
+            messages = messages + [{"role": MessageRole.ASSISTANT, "content": prefix}]
+        prompt_tensor = processor.apply_chat_template(
+            # messages + [{"role": MessageRole.ASSISTANT, "content": prefix}],
+            messages,
+            tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
+            tokenize=True,
+            return_tensors="pt",
+            return_dict=True,
+            add_generation_prompt=True if tools_to_call_from else False,
+        )
+        if messages[-1]['role'] == MessageRole.ASSISTANT:
+            for key in prompt_tensor.keys():
+                prompt_tensor[key] = prompt_tensor[key][:, :-2]
+        # print(f'\n\n******{processor.apply_chat_template(messages, tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None, tokenize=False, add_generation_prompt=True)}*****\n\n', flush=True)
+        print(f'\n\n******{processor.decode(prompt_tensor["input_ids"][0], skip_special_tokens=False)}*****\n\n', flush=True)
+
 
         prompt_tensor = prompt_tensor.to(self.model.device)
         count_prompt_tokens = prompt_tensor["input_ids"].shape[1]
 
         if stop_sequences:
-            stopping_criteria = self.make_stopping_criteria(
-                stop_sequences, tokenizer=self.processor if hasattr(self, "processor") else self.tokenizer
-            )
+            stopping_criteria = self.make_stopping_criteria(stop_sequences, tokenizer=self.processor)
         else:
             stopping_criteria = None
 
@@ -824,12 +871,11 @@ class TransformersModel(Model):
             **prompt_tensor,
             stopping_criteria=stopping_criteria,
             **completion_kwargs,
+            do_sample=False,
         )
         generated_tokens = out[0, count_prompt_tokens:]
-        if hasattr(self, "processor"):
-            output_text = self.processor.decode(generated_tokens, skip_special_tokens=True)
-        else:
-            output_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+        output_text = prefix + processor.decode(generated_tokens, skip_special_tokens=True)
+        print(f'\n\n$$$$$$$${prefix + processor.decode(generated_tokens, skip_special_tokens=False)}$$$$$$$$$\n\n', flush=True)
         self.last_input_token_count = count_prompt_tokens
         self.last_output_token_count = len(generated_tokens)
 
