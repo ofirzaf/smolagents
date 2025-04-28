@@ -315,6 +315,7 @@ class GradioUI:
                     )
 
                 gr.Examples([
+                        ["Write a python function for building a PowerPoint presentation according to a list of slides where each slide has a title and a body and a save path"],
                         ["Summarize the main innovations in Phi-4-mini model released by Microsoft"],
                         ["Prepare a presnetation presnting your results"],
                         ["Please also send the key innovations to my colleague at ofir.zafrir@intel.com"],
