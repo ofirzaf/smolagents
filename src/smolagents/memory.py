@@ -109,7 +109,7 @@ class ActionStep(MemoryStep):
                     content=[
                         {
                             "type": "text",
-                            "text": f"Observation:\n{self.observations}",
+                            "text": f"Observation:\n{self.observations}ֿ\n\n",
                         }
                     ],
                 )

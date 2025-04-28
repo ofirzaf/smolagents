@@ -786,7 +786,18 @@ class TransformersModel(Model):
         #         message["tools"] = json.dumps(tools_for_prompt)
         #         break
 
+        # If last message is an assistant message we want to continue the same message and therefore we will add the prefix.
+        # prefix = "Action:\n[{\"" if messages[-1]["role"] == MessageRole.ASSISTANT else ""
+        prefix = "Action:\n[{\""
+        if messages[-1]["role"] == MessageRole.ASSISTANT:
+            try:
+                messages[-1]["content"]["text"] = messages[-1]["content"]["text"] + prefix
+            except TypeError:
+                messages[-1]["content"] = messages[-1]["content"] + prefix
+        else:
+            messages = messages + [{"role": MessageRole.ASSISTANT, "content": prefix}]
         prompt_tensor = processor.apply_chat_template(
+            # messages + [{"role": MessageRole.ASSISTANT, "content": prefix}],
             messages,
             tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None,
             tokenize=True,
@@ -794,16 +805,18 @@ class TransformersModel(Model):
             return_dict=True,
             add_generation_prompt=True if tools_to_call_from else False,
         )
+        if messages[-1]['role'] == MessageRole.ASSISTANT:
+            for key in prompt_tensor.keys():
+                prompt_tensor[key] = prompt_tensor[key][:, :-2]
         # print(f'\n\n******{processor.apply_chat_template(messages, tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None, tokenize=False, add_generation_prompt=True)}*****\n\n', flush=True)
+        print(f'\n\n******{processor.decode(prompt_tensor["input_ids"][0], skip_special_tokens=False)}*****\n\n', flush=True)
 
 
         prompt_tensor = prompt_tensor.to(self.model.device)
         count_prompt_tokens = prompt_tensor["input_ids"].shape[1]
 
         if stop_sequences:
-            stopping_criteria = self.make_stopping_criteria(
-                stop_sequences, tokenizer=self.processor if hasattr(self, "processor") else self.tokenizer
-            )
+            stopping_criteria = self.make_stopping_criteria(stop_sequences, tokenizer=self.processor)
         else:
             stopping_criteria = None
 
@@ -811,10 +824,11 @@ class TransformersModel(Model):
             **prompt_tensor,
             stopping_criteria=stopping_criteria,
             **completion_kwargs,
+            do_sample=False,
         )
         generated_tokens = out[0, count_prompt_tokens:]
-        output = processor.decode(generated_tokens, skip_special_tokens=True)
-        # print(f'\n\n$$$$$$$${processor.decode(generated_tokens, skip_special_tokens=False)}$$$$$$$$$\n\n', flush=True)
+        output_text = prefix + processor.decode(generated_tokens, skip_special_tokens=True)
+        print(f'\n\n$$$$$$$${prefix + processor.decode(generated_tokens, skip_special_tokens=False)}$$$$$$$$$\n\n', flush=True)
         self.last_input_token_count = count_prompt_tokens
         self.last_output_token_count = len(generated_tokens)
 
