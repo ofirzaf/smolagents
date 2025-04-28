@@ -172,11 +172,22 @@ def get_tool_json_phi4_schema(tool: Tool) -> Dict:
     }
 
 
-def remove_stop_sequences(content: str, stop_sequences: List[str]) -> str:
-    for stop_seq in stop_sequences:
-        if content[-len(stop_seq) :] == stop_seq:
-            content = content[: -len(stop_seq)]
-    return content
+# def remove_stop_sequences(content: str, stop_sequences: List[str]) -> str:
+#     for stop_seq in stop_sequences:
+#         if content[-len(stop_seq) :] == stop_seq:
+#             content = content[: -len(stop_seq)]
+#     return content
+
+
+def remove_stop_sequences(content: str, stop_sequences: list[str]) -> str:
+    """
+    Returns the part of the string `s` up to (but not including) the first occurrence 
+    of any substring in `substrings`. If none are found, returns the entire string.
+    """
+    indices = [content.find(sub) for sub in stop_sequences if sub in content]
+    if not indices:
+        return content
+    return content[:min(indices)]
 
 
 def get_clean_message_list(
@@ -732,7 +743,7 @@ class TransformersModel(Model):
             def __call__(self, input_ids, scores, **kwargs):
                 generated = self.tokenizer.decode(input_ids[0][-1], skip_special_tokens=True)
                 self.stream += generated
-                if any([self.stream.endswith(stop_string) for stop_string in self.stop_strings]):
+                if any([stop_string in self.stream for stop_string in self.stop_strings]):
                     return True
                 return False
 
