@@ -802,6 +802,7 @@ class TransformersModel(Model):
         stop_sequences: Optional[List[str]] = None,
         grammar: Optional[str] = None,
         tools_to_call_from: Optional[List[Tool]] = None,
+        prefix='',
         **kwargs,
     ) -> ChatMessage:
         completion_kwargs = self._prepare_completion_kwargs(
@@ -835,7 +836,7 @@ class TransformersModel(Model):
 
         # If last message is an assistant message we want to continue the same message and therefore we will add the prefix.
         # prefix = "Action:\n[{\"" if messages[-1]["role"] == MessageRole.ASSISTANT else ""
-        prefix = "Action:\n[{\""
+        # prefix = "Action:\n[{\""
         if messages[-1]["role"] == MessageRole.ASSISTANT:
             try:
                 messages[-1]["content"]["text"] = messages[-1]["content"]["text"] + prefix
@@ -850,7 +851,8 @@ class TransformersModel(Model):
             tokenize=True,
             return_tensors="pt",
             return_dict=True,
-            add_generation_prompt=True if tools_to_call_from else False,
+            # add_generation_prompt=True if tools_to_call_from else False,
+            add_generation_prompt=True
         )
         if messages[-1]['role'] == MessageRole.ASSISTANT:
             for key in prompt_tensor.keys():
