@@ -161,14 +161,14 @@ def parse_json_blob(json_blob: str) -> Tuple[Dict[str, str], str]:
         raise ValueError("The model output does not contain any JSON blob.")
     except json.JSONDecodeError as e:
         place = e.pos
-        if json_blob[place - 1 : place + 2] == "},\n":
+        if json_data[place - 1 : place + 2] == "},\n":
             raise ValueError(
                 "JSON is invalid: you probably tried to provide multiple tool calls in one action. PROVIDE ONLY ONE TOOL CALL."
             )
         raise ValueError(
             f"The JSON blob you used is invalid due to the following error: {e}.\n"
-            f"JSON blob was: {json_blob}, decoding failed on that specific part of the blob:\n"
-            f"'{json_blob[place - 4 : place + 5]}'."
+            f"JSON blob was: {json_data}, decoding failed on that specific part of the blob:\n"
+            f"'{json_data[place - 4 : place + 5]}'."
         )
 
 
