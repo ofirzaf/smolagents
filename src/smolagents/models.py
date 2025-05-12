@@ -737,7 +737,7 @@ class TransformersModel(Model):
             )
         self.processor = AutoTokenizer.from_pretrained(model_id)
         self._is_vlm = False
-        if backend == "torch":
+        if backend == "torch" or backend == "ipex-woq":
             if device_map is None:
                 if torch.cuda.is_available():
                     device_map = "cuda"
@@ -745,6 +745,9 @@ class TransformersModel(Model):
                     device_map = "xpu"
                 else:
                     device_map = "cpu"
+            if backend == "ipex-woq":
+                pass
+                from neural_compressor.transformers import AutoModelForCausalLM
             logger.info(f"Using device: {device_map}")
             try:
                 self.model = AutoModelForImageTextToText.from_pretrained(
@@ -766,6 +769,16 @@ class TransformersModel(Model):
                     self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
             else:
                 raise e
+            if backend == "ipex-woq":
+                import intel_extension_for_pytorch as ipex
+                self.model = self.model.eval().to(device_map).to(memory_format=torch.channels_last)
+                woq_quantization_config = getattr(self.model, "quantization_config", None)
+                self.model = ipex.llm.optimize(
+                    self.model, 
+                    device=device_map, 
+                    inplace=True, 
+                    quantization_config=woq_quantization_config
+                )
         elif backend == "ov-optimum":
             from optimum.intel import OVModelForCausalLM
             device = kwargs.get("device", None)
@@ -858,7 +871,8 @@ class TransformersModel(Model):
             for key in prompt_tensor.keys():
                 prompt_tensor[key] = prompt_tensor[key][:, :-2]
         # print(f'\n\n******{processor.apply_chat_template(messages, tools=[get_tool_json_schema(tool) for tool in tools_to_call_from] if tools_to_call_from else None, tokenize=False, add_generation_prompt=True)}*****\n\n', flush=True)
-        print(f'\n\n******{processor.decode(prompt_tensor["input_ids"][0], skip_special_tokens=False)}*****\n\n', flush=True)
+        print(f'\n\n******{processor.decode(prompt_tensor["input_ids"][0], skip_special_tokens=False)}*****', flush=True)
+        print(f'Number of inputs tokens: {prompt_tensor["input_ids"].shape[1]}\n\n', flush=True)
 
 
         prompt_tensor = prompt_tensor.to(self.model.device)
@@ -874,6 +888,8 @@ class TransformersModel(Model):
             stopping_criteria=stopping_criteria,
             **completion_kwargs,
             do_sample=False,
+            use_cache=True,
+            cache_implementation="static",
         )
         generated_tokens = out[0, count_prompt_tokens:]
         output_text = prefix + processor.decode(generated_tokens, skip_special_tokens=True)
