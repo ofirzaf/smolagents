@@ -786,6 +786,7 @@ class TransformersModel(Model):
                 import openvino as ov
                 device = "GPU" if "GPU" in ov.Core().get_available_devices() else "CPU"
             self.model = OVModelForCausalLM.from_pretrained(model_id, device=device, export=False)
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
         super().__init__(flatten_messages_as_text=not self._is_vlm, **kwargs)
 
     def make_stopping_criteria(self, stop_sequences: List[str], tokenizer) -> "StoppingCriteriaList":
