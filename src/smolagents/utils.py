@@ -152,10 +152,9 @@ def make_json_serializable(obj: Any) -> Any:
 def parse_json_blob(json_blob: str) -> Tuple[Dict[str, str], str]:
     "Extracts the JSON blob from the input and returns the JSON data and the rest of the input."
     try:
+        decoder = json.JSONDecoder(strict=False)
         first_accolade_index = json_blob.find("{")
-        last_accolade_index = [a.start() for a in list(re.finditer("}", json_blob))][-1]
-        json_data = json_blob[first_accolade_index : last_accolade_index + 1]
-        json_data = json.loads(json_data, strict=False)
+        json_data, _ = decoder.raw_decode(json_blob[first_accolade_index:])
         return json_data, json_blob[:first_accolade_index]
     except IndexError:
         raise ValueError("The model output does not contain any JSON blob.")
@@ -167,7 +166,7 @@ def parse_json_blob(json_blob: str) -> Tuple[Dict[str, str], str]:
             )
         raise ValueError(
             f"The JSON blob you used is invalid due to the following error: {e}.\n"
-            f"JSON blob was: {json_data}, decoding failed on that specific part of the blob:\n"
+            f"JSON blob was: {json_blob}, decoding failed on that specific part of the blob:\n"
             f"'{json_data[place - 4 : place + 5]}'."
         )
 

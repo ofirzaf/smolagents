@@ -1015,7 +1015,7 @@ class ToolCallingAgent(MultiStepAgent):
                 memory_messages,
                 tools_to_call_from=list(self.tools.values()),
                 stop_sequences=["Observation:", "Calling tools:"],
-                prefix="Action:\n[{\"",
+                prefix="Action:\n{\"",
             )
             memory_step.model_output_message = model_message
         except Exception as e:

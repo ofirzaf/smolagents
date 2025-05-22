@@ -90,13 +90,18 @@ class ActionStep(MemoryStep):
             )
 
         if self.tool_calls is not None:
+            if len(self.tool_calls) > 1:
+                logger.warning(
+                    "Multiple tool calls detected in a single step. This is not supported yet. Only the first one will be displayed." \
+                    f"Here are the tool calls: {self.tool_calls}"
+                )
             messages.append(
                 Message(
                     role=MessageRole.TOOL_CALL,
                     content=[
                         {
                             "type": "text",
-                            "text": f'Action:\n{json.dumps([tc.dict()["function"] for tc in self.tool_calls], default=str)}\n',
+                            "text": f'Action:\n{json.dumps([tc.dict()["function"] for tc in self.tool_calls][0], default=str)}\n',
                         }
                     ],
                 )

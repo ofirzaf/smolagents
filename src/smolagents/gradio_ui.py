@@ -321,8 +321,7 @@ class GradioUI:
                         ["Write a python function for building a PowerPoint presentation according to a list of slides where each slide has a title and a body and a save path"],
                         ["Prepare a presentation on the main innovations in Phi-4-mini model released by Microsoft"],
                         ["Summarize the main innovations in Phi-4-mini model released by Microsoft"],
-                        ["Prepare a presnetation presnting your results"],
-                        ["Please also send the key innovations to my colleague at ofir.zafrir@intel.com"],
+                        ["What was the most significant statement Lip-Bu Tan made in https://www.youtube.com/watch?v=2IWeQr3KQyw"],
                         ["Send a report on your findings to my colleague at ofir.zafrir@intel.com"],
                         ["Find me a flight from New York to Los Angeles on 2025-10-01 and send it over email to me at ofir.zafrir@intel.com"]
                     ],
