@@ -403,6 +403,12 @@ class GradioUI:
             gr.Button(interactive=False),
         )
 
+    def clear_agent_memory(self, session_state):
+        if "agent" not in session_state:
+            session_state["agent"] = self.agent
+        session_state["agent"].memory.reset()
+        session_state["agent"].monitor.reset()
+
     def launch(self, share: bool = True, **kwargs):
         """
         Launch the Gradio app with the agent interface.
@@ -438,6 +444,7 @@ class GradioUI:
                         placeholder="Enter your prompt here and press Shift+Enter or press the button",
                     )
                     submit_btn = gr.Button("Submit", variant="primary")
+                    clear_btn = gr.ClearButton(variant="secondary")
 
                 # If an upload folder is provided, enable the upload feature
                 if self.file_upload_folder is not None:
@@ -472,6 +479,9 @@ class GradioUI:
             )
 
             # Set up event handlers
+            clear_btn.add([text_input, chatbot])
+            clear_btn.click(self.clear_agent_memory, [session_state])
+
             text_input.submit(
                 self.log_user_message,
                 [text_input, file_uploads_log],
